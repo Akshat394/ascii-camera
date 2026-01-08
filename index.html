@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Live ASCII Camera Feed</title>
+  <style>
+    body {
+      background: black;
+      color: lime;
+      font-family: monospace;
+      margin: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+    }
+    #ascii {
+      white-space: pre;
+      font-size: 6px;
+      line-height: 6px;
+      overflow: hidden;
+      text-align: center;
+    }
+    video {
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <video id="video" autoplay playsinline></video>
+  <pre id="ascii"></pre>
+  <script>
+    const video = document.getElementById('video');
+    const ascii = document.getElementById('ascii');
+
+    const symbols = [
+      '.', '+', '=', '|', '#', '@'
+    ];
+
+    const getSymbol = (g, dx, dy) => {
+      const edgeStrength = Math.sqrt(dx * dx + dy * dy);
+      const angle = Math.atan2(dy, dx);
+
+      if (edgeStrength > 100) {
+        if (angle > -0.5 && angle < 0.5) return '='; // horizontal
+        if (angle > 1 || angle < -1) return '|'; // vertical
+        if (angle > 0.5 && angle < 1) return '#'; // convex strong
+        return '@'; // general strong feature
+      } else if (edgeStrength > 40) {
+        return '+'; // mild
+      } else {
+        return '.'; // smooth
+      }
+    };
+
+    navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
+      .then(stream => {
+        video.srcObject = stream;
+        video.play();
+      });
+
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+
+    function drawAscii() {
+      const width = 80;
+      const height = 60;
+      canvas.width = width;
+      canvas.height = height;
+      ctx.drawImage(video, 0, 0, width, height);
+      const imageData = ctx.getImageData(0, 0, width, height);
+      const { data } = imageData;
+      let output = '';
+
+      for (let y = 1; y < height - 1; y++) {
+        for (let x = 1; x < width - 1; x++) {
+          const i = (y * width + x) * 4;
+
+          const g = (data[i] + data[i + 1] + data[i + 2]) / 3;
+
+          const gx = (
+            -data[((y - 1) * width + (x - 1)) * 4] - 2 * data[(y * width + (x - 1)) * 4] - data[((y + 1) * width + (x - 1)) * 4] +
+            data[((y - 1) * width + (x + 1)) * 4] + 2 * data[(y * width + (x + 1)) * 4] + data[((y + 1) * width + (x + 1)) * 4]
+          ) / 8;
+
+          const gy = (
+            -data[((y - 1) * width + (x - 1)) * 4] - 2 * data[((y - 1) * width + x) * 4] - data[((y - 1) * width + (x + 1)) * 4] +
+            data[((y + 1) * width + (x - 1)) * 4] + 2 * data[((y + 1) * width + x) * 4] + data[((y + 1) * width + (x + 1)) * 4]
+          ) / 8;
+
+          output += getSymbol(g, gx, gy);
+        }
+        output += '\n';
+      }
+      ascii.textContent = output;
+      requestAnimationFrame(drawAscii);
+    }
+
+    video.addEventListener('play', () => {
+      drawAscii();
+    });
+  </script>
+</body>
+</html>
