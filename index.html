@@ -1,118 +1,130 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Live ASCII Camera Feed</title>
   <style>
     body {
       margin: 0;
-      background: black;
-      color: white;
+      background: #000;
+      color: #0f0;
       font-family: monospace;
       overflow: hidden;
       display: flex;
       flex-direction: column;
       align-items: center;
-      justify-content: flex-start;
     }
-    #ascii {
-      white-space: pre;
-      font-size: 5px;
-      line-height: 5px;
-      text-align: center;
-      padding-top: 5px;
-    }
-    video {
+    video, canvas {
       display: none;
     }
-    #toggleBtn {
-      margin-top: 10px;
-      padding: 10px 20px;
-      background-color: #333;
-      color: white;
-      border: none;
-      border-radius: 5px;
-      cursor: pointer;
-      font-size: 16px;
+    pre {
+      font-size: 6px;
+      line-height: 6px;
+      white-space: pre;
+      text-align: center;
+    }
+    #controls {
+      position: fixed;
+      top: 10px;
+      right: 10px;
+      z-index: 10;
+    }
+    button {
+      font-size: 1rem;
+      padding: 0.5rem 1rem;
     }
   </style>
 </head>
 <body>
+  <div id="controls">
+    <button id="toggle">Toggle Camera</button>
+  </div>
   <video id="video" autoplay playsinline></video>
+  <canvas id="canvas"></canvas>
   <pre id="ascii"></pre>
-  <button id="toggleBtn">Toggle Camera</button>
 
   <script>
-    const video = document.getElementById("video");
-    const ascii = document.getElementById("ascii");
-    const toggleBtn = document.getElementById("toggleBtn");
-    let currentStream;
-    let useFrontCamera = true;
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    const ascii = document.getElementById('ascii');
+    const toggle = document.getElementById('toggle');
 
-    const asciiSymbols = ['@', '#', '+', '=', '|', '.', ' '];
+    let stream = null;
+
+    const constraints = [
+      { facingMode: 'environment' },
+      { facingMode: 'user' }
+    ];
+    let camIndex = 0;
 
     async function startCamera() {
-      if (currentStream) {
-        currentStream.getTracks().forEach(track => track.stop());
+      if (stream) {
+        stream.getTracks().forEach(track => track.stop());
       }
-
-      const constraints = {
-        video: {
-          facingMode: useFrontCamera ? "user" : "environment",
-          width: { ideal: 128 },
-          height: { ideal: 72 }
-        }
-      };
-
       try {
-        currentStream = await navigator.mediaDevices.getUserMedia(constraints);
-        video.srcObject = currentStream;
-      } catch (err) {
-        alert("Error accessing camera: " + err.message);
+        stream = await navigator.mediaDevices.getUserMedia({ video: constraints[camIndex % 2] });
+        video.srcObject = stream;
+      } catch (e) {
+        console.error("Camera error:", e);
       }
     }
 
-    function convertToAscii(ctx, width, height) {
-      const imgData = ctx.getImageData(0, 0, width, height);
-      const pixels = imgData.data;
-      let asciiFrame = "";
-
-      for (let y = 0; y < height; y++) {
-        for (let x = 0; x < width; x++) {
-          const idx = (y * width + x) * 4;
-          const r = pixels[idx];
-          const g = pixels[idx + 1];
-          const b = pixels[idx + 2];
-          const brightness = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-          const charIdx = Math.floor((brightness / 255) * (asciiSymbols.length - 1));
-          asciiFrame += asciiSymbols[charIdx];
-        }
-        asciiFrame += "\n";
-      }
-      ascii.textContent = asciiFrame;
-    }
-
-    function drawAsciiFrame() {
-      const width = 64;
-      const height = 36;
-      const canvas = document.createElement("canvas");
-      canvas.width = width;
-      canvas.height = height;
-      const ctx = canvas.getContext("2d");
-      ctx.drawImage(video, 0, 0, width, height);
-      convertToAscii(ctx, width, height);
-      requestAnimationFrame(drawAsciiFrame);
-    }
-
-    toggleBtn.onclick = () => {
-      useFrontCamera = !useFrontCamera;
+    toggle.onclick = () => {
+      camIndex++;
       startCamera();
     };
 
-    startCamera().then(() => {
-      requestAnimationFrame(drawAsciiFrame);
-    });
+    function pixelToSymbol(brightness, contrast) {
+      if (contrast > 60 && brightness > 180) return '#';
+      if (contrast > 40) return '@';
+      if (contrast > 20 && brightness > 140) return '=';
+      if (contrast > 20 && brightness < 100) return '|';
+      if (brightness > 200) return '+';
+      if (brightness < 80) return '.';
+      return ' ';
+    }
+
+    function getContrast(x, y, imgData, w, h) {
+      const i = (y * w + x) * 4;
+      const center = imgData[i];
+      let contrast = 0;
+      const neighbors = [
+        (y > 0 ? imgData[((y - 1) * w + x) * 4] : center),
+        (y < h - 1 ? imgData[((y + 1) * w + x) * 4] : center),
+        (x > 0 ? imgData[(y * w + (x - 1)) * 4] : center),
+        (x < w - 1 ? imgData[(y * w + (x + 1)) * 4] : center)
+      ];
+      neighbors.forEach(n => contrast += Math.abs(center - n));
+      return contrast / neighbors.length;
+    }
+
+    function drawASCII() {
+      const width = 120;
+      const height = 80;
+      canvas.width = width;
+      canvas.height = height;
+      ctx.drawImage(video, 0, 0, width, height);
+      const frame = ctx.getImageData(0, 0, width, height);
+      const data = frame.data;
+      let asciiFrame = '';
+
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+          const i = (y * width + x) * 4;
+          const r = data[i], g = data[i+1], b = data[i+2];
+          const brightness = 0.299 * r + 0.587 * g + 0.114 * b;
+          const contrast = getContrast(x, y, data, width, height);
+          asciiFrame += pixelToSymbol(brightness, contrast);
+        }
+        asciiFrame += '\n';
+      }
+      ascii.textContent = asciiFrame;
+      requestAnimationFrame(drawASCII);
+    }
+
+    startCamera().then(() => requestAnimationFrame(drawASCII));
   </script>
 </body>
 </html>
