@@ -1,130 +1,114 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Live ASCII Camera Feed</title>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Live ASCII Camera with Red Boost</title>
   <style>
     body {
       margin: 0;
-      background: #000;
-      color: #0f0;
+      background: black;
+      color: white;
       font-family: monospace;
-      overflow: hidden;
       display: flex;
       flex-direction: column;
       align-items: center;
+      justify-content: center;
+      height: 100vh;
+      overflow: hidden;
     }
     video, canvas {
       display: none;
     }
-    pre {
-      font-size: 6px;
-      line-height: 6px;
+    #ascii {
       white-space: pre;
+      font-size: 7px;
+      line-height: 6px;
+      letter-spacing: -1px;
       text-align: center;
-    }
-    #controls {
-      position: fixed;
-      top: 10px;
-      right: 10px;
-      z-index: 10;
+      user-select: none;
     }
     button {
-      font-size: 1rem;
-      padding: 0.5rem 1rem;
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      padding: 10px;
+      font-size: 14px;
+      background: #222;
+      color: white;
+      border: 1px solid white;
+      cursor: pointer;
+      z-index: 2;
     }
   </style>
 </head>
 <body>
-  <div id="controls">
-    <button id="toggle">Toggle Camera</button>
-  </div>
+  <button id="toggleCam">Switch Camera</button>
+  <pre id="ascii"></pre>
   <video id="video" autoplay playsinline></video>
   <canvas id="canvas"></canvas>
-  <pre id="ascii"></pre>
 
   <script>
-    const video = document.getElementById('video');
-    const canvas = document.getElementById('canvas');
-    const ctx = canvas.getContext('2d');
-    const ascii = document.getElementById('ascii');
-    const toggle = document.getElementById('toggle');
+    const asciiEl = document.getElementById("ascii");
+    const video = document.getElementById("video");
+    const canvas = document.getElementById("canvas");
+    const ctx = canvas.getContext("2d");
+    const toggleBtn = document.getElementById("toggleCam");
 
+    let usingFront = true;
     let stream = null;
 
-    const constraints = [
-      { facingMode: 'environment' },
-      { facingMode: 'user' }
-    ];
-    let camIndex = 0;
+    const asciiChars = ['@', '#', '=', '+', '|', '.', ' '];
 
     async function startCamera() {
       if (stream) {
-        stream.getTracks().forEach(track => track.stop());
+        stream.getTracks().forEach(t => t.stop());
       }
-      try {
-        stream = await navigator.mediaDevices.getUserMedia({ video: constraints[camIndex % 2] });
-        video.srcObject = stream;
-      } catch (e) {
-        console.error("Camera error:", e);
-      }
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: usingFront ? "user" : "environment" },
+        audio: false
+      });
+      video.srcObject = stream;
     }
 
-    toggle.onclick = () => {
-      camIndex++;
+    toggleBtn.addEventListener("click", () => {
+      usingFront = !usingFront;
       startCamera();
-    };
+    });
 
-    function pixelToSymbol(brightness, contrast) {
-      if (contrast > 60 && brightness > 180) return '#';
-      if (contrast > 40) return '@';
-      if (contrast > 20 && brightness > 140) return '=';
-      if (contrast > 20 && brightness < 100) return '|';
-      if (brightness > 200) return '+';
-      if (brightness < 80) return '.';
-      return ' ';
-    }
-
-    function getContrast(x, y, imgData, w, h) {
-      const i = (y * w + x) * 4;
-      const center = imgData[i];
-      let contrast = 0;
-      const neighbors = [
-        (y > 0 ? imgData[((y - 1) * w + x) * 4] : center),
-        (y < h - 1 ? imgData[((y + 1) * w + x) * 4] : center),
-        (x > 0 ? imgData[(y * w + (x - 1)) * 4] : center),
-        (x < w - 1 ? imgData[(y * w + (x + 1)) * 4] : center)
-      ];
-      neighbors.forEach(n => contrast += Math.abs(center - n));
-      return contrast / neighbors.length;
+    function getSymbol(r, g, b) {
+      // Enhance red if it's relatively dominant
+      const redBias = r > 1.2 * g && r > 1.2 * b ? 40 : 0;
+      const luminance = 0.3 * r + 0.59 * g + 0.11 * b + redBias;
+      const normalized = Math.min(255, Math.max(0, luminance));
+      const index = Math.floor((normalized / 255) * (asciiChars.length - 1));
+      return asciiChars[index];
     }
 
     function drawASCII() {
-      const width = 120;
-      const height = 80;
+      const width = 80;
+      const height = 60;
       canvas.width = width;
       canvas.height = height;
       ctx.drawImage(video, 0, 0, width, height);
       const frame = ctx.getImageData(0, 0, width, height);
-      const data = frame.data;
-      let asciiFrame = '';
-
+      let asciiStr = "";
       for (let y = 0; y < height; y++) {
         for (let x = 0; x < width; x++) {
-          const i = (y * width + x) * 4;
-          const r = data[i], g = data[i+1], b = data[i+2];
-          const brightness = 0.299 * r + 0.587 * g + 0.114 * b;
-          const contrast = getContrast(x, y, data, width, height);
-          asciiFrame += pixelToSymbol(brightness, contrast);
+          const idx = (y * width + x) * 4;
+          const r = frame.data[idx];
+          const g = frame.data[idx + 1];
+          const b = frame.data[idx + 2];
+          asciiStr += getSymbol(r, g, b);
         }
-        asciiFrame += '\n';
+        asciiStr += "\n";
       }
-      ascii.textContent = asciiFrame;
+      asciiEl.textContent = asciiStr;
       requestAnimationFrame(drawASCII);
     }
 
-    startCamera().then(() => requestAnimationFrame(drawASCII));
+    video.addEventListener("play", drawASCII);
+    startCamera();
   </script>
 </body>
 </html>
