@@ -6,101 +6,94 @@
   <title>Live ASCII Camera Feed</title>
   <style>
     body {
-      background: black;
-      color: lime;
+      background-color: black;
+      color: white;
       font-family: monospace;
       margin: 0;
+      padding: 0;
       display: flex;
       flex-direction: column;
       align-items: center;
       justify-content: center;
       height: 100vh;
     }
-    #ascii {
-      white-space: pre;
-      font-size: 6px;
-      line-height: 6px;
-      overflow: hidden;
-      text-align: center;
-    }
     video {
       display: none;
+    }
+    pre {
+      white-space: pre;
+      font-size: 5px;
+      line-height: 4px;
     }
   </style>
 </head>
 <body>
-  <video id="video" autoplay playsinline></video>
   <pre id="ascii"></pre>
+  <video id="video" autoplay playsinline></video>
+  <canvas id="canvas" style="display:none;"></canvas>
+
   <script>
+    const asciiDisplay = document.getElementById('ascii');
     const video = document.getElementById('video');
-    const ascii = document.getElementById('ascii');
-
-    const symbols = [
-      '.', '+', '=', '|', '#', '@'
-    ];
-
-    const getSymbol = (g, dx, dy) => {
-      const edgeStrength = Math.sqrt(dx * dx + dy * dy);
-      const angle = Math.atan2(dy, dx);
-
-      if (edgeStrength > 100) {
-        if (angle > -0.5 && angle < 0.5) return '='; // horizontal
-        if (angle > 1 || angle < -1) return '|'; // vertical
-        if (angle > 0.5 && angle < 1) return '#'; // convex strong
-        return '@'; // general strong feature
-      } else if (edgeStrength > 40) {
-        return '+'; // mild
-      } else {
-        return '.'; // smooth
-      }
-    };
-
-    navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
-      .then(stream => {
-        video.srcObject = stream;
-        video.play();
-      });
-
-    const canvas = document.createElement('canvas');
+    const canvas = document.getElementById('canvas');
     const ctx = canvas.getContext('2d');
 
-    function drawAscii() {
-      const width = 80;
-      const height = 60;
-      canvas.width = width;
-      canvas.height = height;
-      ctx.drawImage(video, 0, 0, width, height);
-      const imageData = ctx.getImageData(0, 0, width, height);
-      const { data } = imageData;
-      let output = '';
+    const width = 120;
+    const height = 90;
+    canvas.width = width;
+    canvas.height = height;
 
-      for (let y = 1; y < height - 1; y++) {
-        for (let x = 1; x < width - 1; x++) {
-          const i = (y * width + x) * 4;
+    const symbols = [
+      { char: '@', condition: p => p > 220 },
+      { char: '#', condition: p => p > 180 },
+      { char: '=', condition: p => p > 140 },
+      { char: '+', condition: p => p > 100 },
+      { char: '|', condition: p => p > 60 },
+      { char: '.', condition: p => p > 20 },
+      { char: ' ', condition: p => true }
+    ];
 
-          const g = (data[i] + data[i + 1] + data[i + 2]) / 3;
-
-          const gx = (
-            -data[((y - 1) * width + (x - 1)) * 4] - 2 * data[(y * width + (x - 1)) * 4] - data[((y + 1) * width + (x - 1)) * 4] +
-            data[((y - 1) * width + (x + 1)) * 4] + 2 * data[(y * width + (x + 1)) * 4] + data[((y + 1) * width + (x + 1)) * 4]
-          ) / 8;
-
-          const gy = (
-            -data[((y - 1) * width + (x - 1)) * 4] - 2 * data[((y - 1) * width + x) * 4] - data[((y - 1) * width + (x + 1)) * 4] +
-            data[((y + 1) * width + (x - 1)) * 4] + 2 * data[((y + 1) * width + x) * 4] + data[((y + 1) * width + (x + 1)) * 4]
-          ) / 8;
-
-          output += getSymbol(g, gx, gy);
-        }
-        output += '\n';
+    async function startCamera() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+        video.srcObject = stream;
+      } catch (err) {
+        alert('Error accessing camera: ' + err);
       }
-      ascii.textContent = output;
-      requestAnimationFrame(drawAscii);
+    }
+
+    function brightness(r, g, b) {
+      // Enhanced brightness calculation that simulates human perception
+      return 0.299 * r + 0.587 * g + 0.114 * b;
+    }
+
+    function frameToASCII() {
+      ctx.drawImage(video, 0, 0, width, height);
+      const frame = ctx.getImageData(0, 0, width, height);
+      const data = frame.data;
+
+      let ascii = '';
+      for (let y = 0; y < height; y += 2) {
+        for (let x = 0; x < width; x++) {
+          const i = (y * width + x) * 4;
+          const r = data[i];
+          const g = data[i + 1];
+          const b = data[i + 2];
+          const v = brightness(r, g, b);
+
+          const symbol = symbols.find(s => s.condition(v));
+          ascii += symbol.char;
+        }
+        ascii += '\n';
+      }
+      asciiDisplay.textContent = ascii;
     }
 
     video.addEventListener('play', () => {
-      drawAscii();
+      setInterval(frameToASCII, 80);
     });
+
+    startCamera();
   </script>
 </body>
 </html>
